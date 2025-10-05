@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solstice - Historical Weather Odds</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet.js for the interactive map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <!-- three.js for globe background -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Orbitron:wght@400;500;700;900&display=swap" rel="stylesheet">
+
+    <style>
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0c1425;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column; 
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 2rem 1rem;
+            gap: 2rem;
+            transition: background 1s ease-in-out;
+            overflow: hidden; /* Prevent scrollbars from background elements */
+        }
+        #bg-globe {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0; /* Behind other content */
+            transition: opacity 1s ease-in-out;
+        }
+        #weather-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: none;
+            overflow: hidden;
+            opacity: 0; /* Hidden by default */
+            transition: opacity 1s ease-in-out;
+        }
+        .background-particle {
+            position: absolute;
+        }
+
+        @keyframes fall {
+            0% { transform: translateY(-10vh); }
+            100% { transform: translateY(110vh); }
+        }
+         @keyframes rise {
+            0% { transform: translateY(110vh) scale(0.5); opacity: 0; }
+            50% { opacity: 0.3; }
+            100% { transform: translateY(-10vh) scale(1); opacity: 0; }
+        }
+        @keyframes wind-blow {
+            0% { transform: translateX(-10vw); }
+            100% { transform: translateX(110vw); }
+        }
+
+        .app-container {
+             z-index: 10;
+             overflow-y: auto; /* Allow app container to scroll */
+             max-height: 100vh;
+             width: 100%;
+        }
+        body.initial-view { justify-content: center; }
+        h1, h2, h3, .font-display { font-family: 'Orbitron', sans-serif; }
+        .page {
+            width: 100%;
+            max-width: 42rem;
+            margin: auto; /* Center page content */
+        }
+        #map { height: 300px; border-radius: 0.5rem; }
+        .leaflet-container { background: #a3bde3; }
+        .leaflet-tile { filter: grayscale(80%) brightness(110%) contrast(90%); }
+
+        /* --- Keyframes for animations --- */
+        @keyframes sun-shimmer { 0%, 100% { transform: scale(1); box-shadow: 0 0 30px 10px rgba(255, 223, 0, 0.7); } 50% { transform: scale(1.1); box-shadow: 0 0 50px 20px rgba(255, 165, 0, 0.8); } }
+        @keyframes rain-fall { 0% { transform: translateY(-100px); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateY(100px); opacity: 0; } }
+        @keyframes wind-gust { 0% { transform: translateX(-150px) skewX(30deg); opacity: 0; } 50% { transform: translateX(0) skewX(0); opacity: 0.7; } 100% { transform: translateX(150px) skewX(-30deg); opacity: 0; } }
+        @keyframes snowflake-fall { 0% { transform: translateY(-100px) rotate(0deg); opacity: 0; } 50% { opacity: 1; } 100% { transform: translateY(100px) rotate(360deg); opacity: 0; } }
+        .temperate-path { stroke-dasharray: 100; stroke-dashoffset: 100; animation: dash 1s ease-out forwards; }
+        @keyframes dash { to { stroke-dashoffset: 0; } }
+        
+        /* Animation container styles */
+        .animation-box { position: relative; width: 150px; height: 150px; overflow: hidden; border-radius: 50%; margin: auto; background: #1a202c; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); }
+        .sun { position: absolute; top: 50%; left: 50%; width: 80px; height: 80px; background: #FFD700; border-radius: 50%; transform: translate(-50%, -50%); animation: sun-shimmer 4s infinite ease-in-out; }
+        .rain-drop { position: absolute; width: 2px; height: 15px; background: linear-gradient(to bottom, rgba(135, 206, 250, 0), rgba(173, 216, 230, 1)); animation: rain-fall 1s infinite linear; }
+        .wind-streak { position: absolute; height: 3px; width: 50%; background: rgba(200, 200, 220, 0.5); border-radius: 2px; animation: wind-gust 2s infinite ease-out; }
+        .snowflake { position: absolute; color: white; font-size: 24px; animation: snowflake-fall 5s infinite linear; }
+    </style>
+</head>
+<body class="antialiased initial-view">
+
+    <canvas id="bg-globe"></canvas>
+    <div id="weather-background"></div>
+    <div class="app-container">
+        <button id="home-btn" class="hidden absolute top-4 left-4 z-20 p-3 bg-gray-700 bg-opacity-50 text-white rounded-full hover:bg-opacity-75 transition-all duration-200 ease-in-out transform hover:scale-110 active:scale-95" title="Go to Home">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M8.354 1.146a.5.5 0 0 0-.708 0l-6 6A.5.5 0 0 0 1.5 7.5v7a.5.5 0 0 0 .5.5h4.5a.5.5 0 0 0 .5-.5v-4h2v4a.5.5 0 0 0 .5.5H14a.5.5 0 0 0 .5-.5v-7a.5.5 0 0 0-.146-.354L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293L8.354 1.146zM2.5 14V7.707l5.5-5.5 5.5 5.5V14H10v-4a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 0-.5.5v4H2.5z"/>
+            </svg>
+        </button>
+    <!-- Page 1: Introduction -->
+    <div id="intro-page" class="page text-center">
+        <h1 class="text-6xl md:text-7xl font-bold text-white tracking-wider mb-4">Solstice</h1>
+        <p class="text-lg text-blue-200 mb-8">Analyze historical weather odds for any location and date.</p>
+        <button id="start-btn" class="bg-indigo-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-indigo-700 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 text-xl">
+            Check The Weather
+        </button>
+    </div>
+
+    <!-- Page 2: Location Selection -->
+    <div id="location-page" class="page hidden">
+        <div class="bg-gray-800 bg-opacity-40 p-6 md:p-8 rounded-xl shadow-2xl border border-gray-700">
+            <h2 class="text-2xl font-semibold mb-4 text-blue-100 text-center">1. Select a Location</h2>
+            <p class="text-gray-400 mb-4 text-center">Choose one of the methods below to set your location.</p>
+            
+            <div class="space-y-4">
+                <div class="flex gap-2">
+                    <input type="text" id="location-search" placeholder="E.g., Paris, France" class="flex-grow p-3 border bg-gray-900 border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 transition text-white">
+                    <button id="search-btn" class="bg-blue-600 text-white font-bold py-3 px-5 rounded-lg hover:bg-blue-700 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95">Search</button>
+                </div>
+                <button id="use-current-location-btn" class="w-full bg-gray-600 text-white font-semibold py-3 px-4 rounded-lg hover:bg-gray-700 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 flex items-center justify-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10zm0-7a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"/></svg>
+                    Use My Current Location
+                </button>
+                <p class="text-gray-400 text-center">- or click directly on the map -</p>
+                <div id="map"></div>
+            </div>
+
+            <div class="mt-4 text-center">
+                 <p class="text-gray-300 h-6">Selected: <span id="coords" class="font-mono font-semibold text-green-400">Not selected</span></p>
+                <button id="next-to-date-btn" class="w-full mt-4 bg-indigo-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-indigo-700 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 disabled:scale-100 disabled:bg-gray-500 disabled:cursor-not-allowed">
+                    Next
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Page 3: Date & Analysis -->
+    <div id="main-app-page" class="page hidden">
+        <main class="bg-gray-800 bg-opacity-40 p-6 md:p-8 rounded-xl shadow-2xl border border-gray-700">
+            <h2 class="text-2xl font-semibold mb-4 text-blue-100 text-center">2. Analyze a Date</h2>
+             <p class="text-sm text-gray-400 mb-4">Select a date to analyze. The app will poll the last 20 years of data for that calendar day.</p>
+            <div class="grid grid-cols-1 gap-4 items-end">
+                <input type="date" id="date-picker" class="w-full p-3 border bg-gray-900 border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 transition text-white" style="color-scheme: dark;">
+                
+                <details class="bg-gray-900/50 p-3 rounded-lg">
+                    <summary class="cursor-pointer text-blue-200 font-semibold flex justify-between items-center"><span>Customize Weather Thresholds</span><span class="text-xs text-gray-400">▼</span></summary>
+                    <div class="grid grid-cols-2 gap-4 mt-3 text-sm">
+                        <div><label for="hot-temp-th" class="block mb-1 text-gray-400">Hot Day (> °C)</label><input type="number" id="hot-temp-th" value="30" class="w-full p-2 bg-gray-700 rounded text-white"></div>
+                        <div><label for="cold-temp-th" class="block mb-1 text-gray-400">Cold Day (< °C)</label><input type="number" id="cold-temp-th" value="10" class="w-full p-2 bg-gray-700 rounded text-white"></div>
+                        <div><label for="windy-th" class="block mb-1 text-gray-400">Windy Day (> km/h)</label><input type="number" id="windy-th" value="54" class="w-full p-2 bg-gray-700 rounded text-white"></div>
+                        <div><label for="wet-th" class="block mb-1 text-gray-400">Wet Day (> mm)</label><input type="number" id="wet-th" value="10" class="w-full p-2 bg-gray-700 rounded text-white"></div>
+                    </div>
+                    <button id="reset-thresholds-btn" class="text-xs text-blue-400 hover:text-blue-300 mt-3 transition-colors duration-200 ease-in-out">Reset to defaults</button>
+                </details>
+
+                <button id="get-historical-btn" class="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-700 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 disabled:scale-100 disabled:bg-gray-500">
+                    Analyze Date
+                </button>
+            </div>
+
+            <div id="results-container" class="text-center mt-6 p-4 bg-gray-900/40 rounded-lg border border-gray-700 hidden">
+                <div id="loader" class="hidden"><svg class="animate-spin h-12 w-12 text-blue-400 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><p class="mt-4 text-gray-300">Analyzing 20 years of historical data...</p></div>
+                <div id="historical-display" class="hidden"><div id="animation-container" class="animation-box mb-4"></div><p class="text-2xl font-bold" id="weather-condition"></p><p class="text-md text-gray-400 mt-1" id="weather-details"></p><hr class="my-4 border-gray-700"><h3 class="text-xl font-semibold text-blue-100 mb-4" id="breakdown-title"></h3><div id="weather-poll-container" class="space-y-3 text-sm"></div><div class="mt-6"><button id="download-data-btn" class="bg-gray-600 text-white py-2 px-4 rounded-lg hover:bg-gray-700 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95">Download Data (JSON)</button></div></div>
+                <div id="error-message" class="hidden text-red-400 bg-red-900/30 p-4 rounded-lg"><p id="error-text" class="font-semibold"></p></div>
+            </div>
+             <button id="back-to-start-btn" class="w-full mt-4 bg-gray-700 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-600 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95">
+                Start Over
+            </button>
+        </main>
+    </div>
+    </div> <!-- end of app-container -->
+
+    <script>
+        // --- PAGE ELEMENTS ---
+        const introPage = document.getElementById('intro-page'), locationPage = document.getElementById('location-page'), mainAppPage = document.getElementById('main-app-page');
+        const startBtn = document.getElementById('start-btn'), nextToDateBtn = document.getElementById('next-to-date-btn'), backToStartBtn = document.getElementById('back-to-start-btn'), homeBtn = document.getElementById('home-btn');
+        const weatherBackground = document.getElementById('weather-background');
+        
+        // --- UI ELEMENTS ---
+        const coordsDisplay = document.getElementById('coords'), datePicker = document.getElementById('date-picker'), getHistoricalBtn = document.getElementById('get-historical-btn'), locationSearchInput = document.getElementById('location-search'), searchBtn = document.getElementById('search-btn'), useCurrentLocationBtn = document.getElementById('use-current-location-btn');
+        const resultsContainer = document.getElementById('results-container'), loader = document.getElementById('loader'), historicalDisplay = document.getElementById('historical-display'), animationContainer = document.getElementById('animation-container'), weatherCondition = document.getElementById('weather-condition'), weatherDetails = document.getElementById('weather-details'), weatherPollContainer = document.getElementById('weather-poll-container'), downloadDataBtn = document.getElementById('download-data-btn'), errorMessage = document.getElementById('error-message'), errorText = document.getElementById('error-text'), breakdownTitle = document.getElementById('breakdown-title'), resetThresholdsBtn = document.getElementById('reset-thresholds-btn');
+        
+        // --- STATE & CONSTANTS ---
+        let selectedLat = null, selectedLon = null, lastApiData = null;
+        const DEFAULT_THRESHOLDS = { hot: 30, cold: 10, windy: 54, wet: 10 };
+        const CONDITION_COLOR_MAP = { 'Hot': 'bg-orange-500', 'Cold': 'bg-cyan-500', 'Windy': 'bg-gray-500', 'Wet': 'bg-indigo-600', 'Temperate': 'bg-green-500' };
+
+        // --- INITIALIZATION ---
+        document.addEventListener('DOMContentLoaded', () => {
+            // Set default date to yesterday for better UX
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            const yyyy = yesterday.getFullYear();
+            const mm = String(yesterday.getMonth() + 1).padStart(2, '0');
+            const dd = String(yesterday.getDate()).padStart(2, '0');
+            datePicker.value = `${yyyy}-${mm}-${dd}`;
+            validateInputs();
+            document.body.style.background = '#0c1425';
+        });
+
+        // --- PAGE NAVIGATION ---
+        startBtn.addEventListener('click', () => {
+            document.body.classList.remove('initial-view');
+            introPage.classList.add('hidden');
+            locationPage.classList.remove('hidden');
+            homeBtn.classList.remove('hidden');
+            setTimeout(() => map.invalidateSize(), 0); // Re-render map after container is visible
+        });
+
+        nextToDateBtn.addEventListener('click', () => {
+            locationPage.classList.add('hidden');
+            mainAppPage.classList.remove('hidden');
+            homeBtn.classList.remove('hidden');
+        });
+
+        function resetToHome() {
+            document.body.classList.add('initial-view');
+            mainAppPage.classList.add('hidden');
+            locationPage.classList.add('hidden');
+            introPage.classList.remove('hidden');
+            homeBtn.classList.add('hidden');
+            // Reset state
+            document.getElementById('bg-globe').style.opacity = '1';
+            weatherBackground.style.opacity = '0';
+            setTimeout(() => weatherBackground.innerHTML = '', 1000); // Clear particles after fade
+            selectedLat = null; selectedLon = null;
+            coordsDisplay.textContent = 'Not selected';
+            if (marker) map.removeLayer(marker);
+            resultsContainer.classList.add('hidden');
+            historicalDisplay.classList.add('hidden');
+            errorMessage.classList.add('hidden');
+            validateInputs();
+        }
+        
+        backToStartBtn.addEventListener('click', resetToHome);
+        homeBtn.addEventListener('click', resetToHome);
+
+        // --- MAP INITIALIZATION ---
+        const map = L.map('map').setView([20, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+        let marker;
+
+        function updateLocation(lat, lon, zoom = 10, name = null) {
+            selectedLat = parseFloat(lat.toFixed(4));
+            selectedLon = parseFloat(lon.toFixed(4));
+            coordsDisplay.textContent = name ? `${name} (${selectedLat}, ${selectedLon})` : `${selectedLat}, ${selectedLon}`;
+            if (marker) map.removeLayer(marker);
+            marker = L.marker([lat, lon]).addTo(map);
+            map.setView([lat, lon], zoom);
+            validateInputs();
+        }
+        map.on('click', (e) => updateLocation(e.latlng.lat, e.latlng.lng));
+        
+        // --- LOCATION METHODS ---
+        async function searchLocation() {
+            const query = locationSearchInput.value.trim();
+            if (!query) return;
+            coordsDisplay.textContent = "Searching...";
+            const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=1`;
+            try {
+                const response = await fetch(url);
+                if (!response.ok) throw new Error('Network response was not ok.');
+                const data = await response.json();
+
+                if (data && data.features && data.features.length > 0) {
+                    const feature = data.features[0];
+                    const [lon, lat] = feature.geometry.coordinates;
+                    
+                    const name = feature.properties.name;
+                    const city = feature.properties.city;
+                    const country = feature.properties.country;
+                    const displayName = [name, city, country].filter(Boolean).join(', ');
+
+                    updateLocation(lat, lon, 10, displayName || 'Selected Location');
+                } else {
+                    coordsDisplay.textContent = "Location not found.";
+                }
+            } catch (error) {
+                console.error('Geocoding error:', error);
+                coordsDisplay.textContent = "Failed to search location.";
+            }
+        }
+        searchBtn.addEventListener('click', searchLocation);
+        locationSearchInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') searchLocation(); });
+
+        useCurrentLocationBtn.addEventListener('click', () => {
+            if (navigator.geolocation) {
+                coordsDisplay.textContent = "Getting location...";
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => updateLocation(pos.coords.latitude, pos.coords.longitude, 12, "Your Location"),
+                    () => { coordsDisplay.textContent = "Unable to retrieve your location."; }
+                );
+            } else { coordsDisplay.textContent = "Geolocation is not supported by your browser."; }
+        });
+        
+        // --- INPUT VALIDATION & UI ---
+        function validateInputs() {
+            nextToDateBtn.disabled = !(selectedLat && selectedLon);
+            getHistoricalBtn.disabled = !(datePicker.value);
+        }
+        datePicker.addEventListener('change', validateInputs);
+
+        resetThresholdsBtn.addEventListener('click', () => {
+            document.getElementById('hot-temp-th').value = DEFAULT_THRESHOLDS.hot;
+            document.getElementById('cold-temp-th').value = DEFAULT_THRESHOLDS.cold;
+            document.getElementById('windy-th').value = DEFAULT_THRESHOLDS.windy;
+            document.getElementById('wet-th').value = DEFAULT_THRESHOLDS.wet;
+        });
+        
+        function showLoader() {
+            resultsContainer.classList.remove('hidden');
+            historicalDisplay.classList.add('hidden');
+            errorMessage.classList.add('hidden');
+            loader.classList.remove('hidden');
+            document.getElementById('bg-globe').style.opacity = '0'; // Fade out globe
+        }
+
+        getHistoricalBtn.addEventListener('click', fetchHistoricalWeather);
+        
+        // --- DATA FETCHING & ANALYSIS ---
+        async function fetchHistoricalWeather() {
+            showLoader();
+            try {
+                const selectedDate = new Date(datePicker.value + "T00:00:00");
+                const month = String(selectedDate.getMonth() + 1).padStart(2, '0'), day = String(selectedDate.getDate()).padStart(2, '0');
+                const currentYear = new Date().getFullYear();
+                
+                // NASA POWER API requires dates in YYYYMMDD format
+                const startDateFormatted = `${currentYear - 20}${month}${day}`;
+                const endDateFormatted = `${currentYear - 1}${month}${day}`;
+
+                // Using NASA POWER API
+                const apiUrl = `https://power.larc.nasa.gov/api/temporal/daily/point?parameters=T2M,PRECTOTCORR,WS10M&community=RE&longitude=${selectedLon}&latitude=${selectedLat}&start=${startDateFormatted}&end=${endDateFormatted}&format=JSON`;
+                
+                const response = await fetch(apiUrl);
+                if (!response.ok) {
+                    const errorBody = await response.text();
+                    let errorMessage = `API Error: ${response.statusText}`;
+                    try {
+                        const errorJson = JSON.parse(errorBody);
+                        if (errorJson.error) { errorMessage = errorJson.error; }
+                    } catch (e) {
+                        errorMessage = `The server returned an invalid response.`;
+                    }
+                    throw new Error(errorMessage);
+                }
+                const data = await response.json();
+                if (!data.properties || !data.properties.parameter) throw new Error('No data found for this location/date range from NASA POWER API.');
+                lastApiData = data;
+                analyzeAndRender(data);
+            } catch (error) { displayError(`Analysis failed: ${error.message}`); }
+        }
+        
+        function analyzeAndRender(data) {
+            const hotTh = parseFloat(document.getElementById('hot-temp-th').value) || DEFAULT_THRESHOLDS.hot;
+            const coldTh = parseFloat(document.getElementById('cold-temp-th').value) || DEFAULT_THRESHOLDS.cold;
+            const windyTh = parseFloat(document.getElementById('windy-th').value) || DEFAULT_THRESHOLDS.windy;
+            const wetTh = parseFloat(document.getElementById('wet-th').value) || DEFAULT_THRESHOLDS.wet;
+
+            const counts = { 'Hot': 0, 'Cold': 0, 'Windy': 0, 'Wet': 0, 'Temperate': 0 };
+            
+            let totalTemp = 0, totalWind = 0, totalPrecip = 0;
+            let analyzedDays = 0;
+            
+            const temps = data.properties.parameter.T2M;
+            const precips = data.properties.parameter.PRECTOTCORR;
+            const winds = data.properties.parameter.WS10M;
+
+            // Get the target month and day (e.g., '1005' for October 5th) to filter the results
+            const selectedDate = new Date(datePicker.value + "T00:00:00");
+            const targetMonthDay = `${String(selectedDate.getMonth() + 1).padStart(2, '0')}${String(selectedDate.getDate()).padStart(2, '0')}`;
+
+            for (const dateString in temps) {
+                // Only analyze data for the specific calendar day we are interested in
+                if (dateString.substring(4) !== targetMonthDay) {
+                    continue; // Skip this day
+                }
+
+                const temp = temps[dateString];
+                const precip = precips[dateString];
+                // NASA POWER provides wind in m/s, convert to km/h (1 m/s = 3.6 km/h)
+                const windInMs = winds[dateString];
+
+                // NASA POWER uses -999 as a fill value for missing data.
+                if (temp === -999 || precip === -999 || windInMs === -999) {
+                    continue;
+                }
+                
+                const wind = windInMs * 3.6;
+
+                analyzedDays++;
+                totalTemp += temp; 
+                totalWind += wind; 
+                totalPrecip += precip;
+                
+                const isHot = temp >= hotTh;
+                const isCold = temp <= coldTh;
+                const isWindy = wind >= windyTh;
+                const isWet = precip >= wetTh;
+
+                if(isHot) counts['Hot']++;
+                if(isCold) counts['Cold']++;
+                if(isWindy) counts['Windy']++;
+                if(isWet) counts['Wet']++;
+
+                if (!isHot && !isCold && !isWindy && !isWet) {
+                    counts['Temperate']++;
+                }
+            }
+
+            if (analyzedDays === 0) {
+                displayError('No valid historical data could be found for the specific day you selected in the 20-year range.');
+                return;
+            }
+
+            const percentages = Object.fromEntries(Object.entries(counts).map(([k, v]) => [k, (v / analyzedDays) * 100]));
+            
+            let visualThemeCondition = 'Temperate';
+            let maxProb = 0;
+            for (const [condition, prob] of Object.entries(percentages)) {
+                if (prob > maxProb) {
+                    maxProb = prob;
+                    visualThemeCondition = condition;
+                }
+            }
+            
+            const avgTemp = totalTemp / analyzedDays, avgWind = totalWind / analyzedDays, avgPrecip = totalPrecip / analyzedDays;
+            renderHistorical({ 
+                visualTheme: visualThemeCondition, 
+                details: `Avg: ${avgTemp.toFixed(1)}°C, ${avgWind.toFixed(1)} km/h, ${avgPrecip.toFixed(1)}mm. Based on ${analyzedDays} days.` 
+            }, percentages);
+        }
+
+        function renderHistorical(result, percentages) {
+            loader.classList.add('hidden');
+            historicalDisplay.classList.remove('hidden');
+            
+            weatherCondition.textContent = "Historical Weather Probabilities";
+            weatherDetails.textContent = result.details;
+            breakdownTitle.textContent = "Chance of Each Condition Occurring";
+            
+            weatherPollContainer.innerHTML = '';
+            const sorted = Object.entries(percentages).sort(([,a],[,b]) => b-a);
+            sorted.forEach(([cond, prob]) => {
+                if (prob > 0) weatherPollContainer.innerHTML += `<div class="flex items-center"><span class="w-1/3 text-left font-medium text-gray-400">${cond}</span><div class="w-2/3 bg-gray-700 rounded-full h-6"><div class="${CONDITION_COLOR_MAP[cond]} h-6 rounded-full text-xs font-bold text-white flex items-center justify-center" style="width: ${prob.toFixed(1)}%; min-width: 3.5rem;">${prob.toFixed(1)}%</div></div></div>`;
+            });
+            animationContainer.innerHTML = getAnimationHTML(result.visualTheme);
+            updateWeatherBackground(result.visualTheme);
+        }
+
+        function updateWeatherBackground(condition) {
+            weatherBackground.innerHTML = '';
+            weatherBackground.style.opacity = '1'; // Fade in particles
+            
+            if (condition === 'Hot') {
+                for (let i = 0; i < 30; i++) {
+                    const heatHaze = document.createElement('div');
+                    heatHaze.className = 'background-particle';
+                    heatHaze.style.left = `${Math.random() * 100}vw`;
+                    heatHaze.style.width = `${Math.random() * 80 + 20}px`;
+                    heatHaze.style.height = heatHaze.style.width;
+                    heatHaze.style.backgroundColor = 'rgba(255, 215, 0, 0.1)';
+                    heatHaze.style.borderRadius = '50%';
+                    heatHaze.style.animation = `rise ${Math.random() * 15 + 10}s linear infinite`;
+                    heatHaze.style.animationDelay = `${Math.random() * 10}s`;
+                    weatherBackground.appendChild(heatHaze);
+                }
+            } else if (condition === 'Cold') {
+                for (let i = 0; i < 50; i++) {
+                    const snowflake = document.createElement('div');
+                    snowflake.className = 'background-particle';
+                    snowflake.innerHTML = '&#10052;';
+                    snowflake.style.left = `${Math.random() * 100}vw`;
+                    snowflake.style.fontSize = `${Math.random() * 16 + 8}px`;
+                    snowflake.style.animation = `fall ${Math.random() * 10 + 5}s linear infinite`;
+                    snowflake.style.animationDelay = `${Math.random() * 5}s`;
+                    snowflake.style.color = 'white';
+                    snowflake.style.opacity = `${Math.random() * 0.7 + 0.3}`;
+                    weatherBackground.appendChild(snowflake);
+                }
+            } else if (condition === 'Wet') {
+                 for (let i = 0; i < 100; i++) {
+                    const raindrop = document.createElement('div');
+                    raindrop.className = 'background-particle';
+                    raindrop.style.left = `${Math.random() * 100}vw`;
+                    raindrop.style.width = '1px';
+                    raindrop.style.height = `${Math.random() * 30 + 20}px`;
+                    raindrop.style.background = 'linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.4))';
+                    raindrop.style.animation = `fall ${Math.random() * 0.5 + 0.3}s linear infinite`;
+                    raindrop.style.animationDelay = `${Math.random() * 5}s`;
+                    weatherBackground.appendChild(raindrop);
+                }
+            } else if (condition === 'Windy') {
+                 for (let i = 0; i < 70; i++) {
+                    const windStreak = document.createElement('div');
+                    windStreak.className = 'background-particle';
+                    windStreak.style.top = `${Math.random() * 100}vh`;
+                    windStreak.style.width = `${Math.random() * 100 + 50}px`;
+                    windStreak.style.height = '1px';
+                    windStreak.style.backgroundColor = 'rgba(255, 255, 255, 0.2)';
+                    windStreak.style.animation = `wind-blow ${Math.random() * 3 + 2}s linear infinite`;
+                    windStreak.style.animationDelay = `${Math.random() * 5}s`;
+                    weatherBackground.appendChild(windStreak);
+                }
+            }
+             // No particles for 'Temperate' to keep it clean
+        }
+        
+        function getAnimationHTML(condition) {
+            switch(condition) {
+                case 'Hot': return `<div class="sun"></div>`;
+                case 'Wet': return Array(15).fill().map(() => `<div class="rain-drop" style="left: ${Math.random()*100}%; animation-delay: ${Math.random()}s;"></div>`).join('');
+                case 'Windy': return Array(3).fill().map(() => `<div class="wind-streak" style="top: ${20 + Math.random()*60}%; animation-duration: ${1 + Math.random()}s;"></div>`).join('');
+                case 'Cold': return Array(10).fill().map(() => `<div class="snowflake" style="left: ${Math.random()*100}%; animation-duration: ${3+Math.random()*3}s; animation-delay: ${Math.random()*3}s;">&#10052;</div>`).join('');
+                default: return `<svg class="w-full h-full" viewBox="0 0 100 100"><path class="temperate-path" d="M20 50 L40 70 L80 30" stroke="#48BB78" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            }
+        }
+        
+        downloadDataBtn.addEventListener('click', () => {
+            if (!lastApiData) return;
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ query: { lat: selectedLat, lon: selectedLon, date: datePicker.value }, data: lastApiData }, null, 2));
+            const a = document.createElement('a');
+            a.href = dataStr;
+            a.download = `solstice_data_${selectedLat}_${selectedLon}.json`;
+            a.click();
+        });
+
+        function displayError(message) {
+            loader.classList.add('hidden');
+            historicalDisplay.classList.add('hidden');
+            errorMessage.classList.remove('hidden');
+            errorText.textContent = message;
+        }
+
+        // --- Script for the globe background animation ---
+        const container = document.body;
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({
+            canvas: document.querySelector('#bg-globe'),
+            alpha: true // Make canvas background transparent
+        });
+
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        
+        // Create the globe geometry and a wireframe material
+        const globeGeometry = new THREE.SphereGeometry(5, 32, 32);
+        const globeMaterial = new THREE.MeshPhongMaterial({
+            color: 0x60a5fa, // A futuristic blue (tailwind's blue-400)
+            wireframe: true,
+            transparent: true,
+            opacity: 0.15
+        });
+        const globe = new THREE.Mesh(globeGeometry, globeMaterial);
+        scene.add(globe);
+        
+        // Add subtle lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
+        scene.add(ambientLight);
+        const pointLight = new THREE.PointLight(0x87ceeb, 1); // Sky blue light
+        pointLight.position.set(5, 10, 15);
+        scene.add(pointLight);
+        
+        // Position the camera
+        camera.position.z = 10;
+        
+        // Handle window resizing to keep the globe responsive
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Animation loop to rotate the globe
+        function animate() {
+            requestAnimationFrame(animate);
+            globe.rotation.y += 0.0005; // Adjust for slower or faster rotation
+            globe.rotation.x += 0.0001;
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
+
+
+
+
